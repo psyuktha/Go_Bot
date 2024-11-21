@@ -1,12 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
@@ -28,10 +29,12 @@ func sendMessage(ctx context.Context, session *Session, input string) (*genai.Ge
 	return resp, nil
 }
 
-func printResponse(resp *genai.GenerateContentResponse) {
+func printResponse(resp *genai.GenerateContentResponse) string {
+	var result string
 	for _, part := range resp.Candidates[0].Content.Parts {
-		fmt.Printf("%v\n", part)
+		result += fmt.Sprintf("%v\n", part)
 	}
+	return result
 }
 
 func main() {
@@ -45,33 +48,31 @@ func main() {
 	model := client.GenerativeModel("gemini-1.5-flash")
 	session := &Session{model: model}
 
-	// Example call to model.GenerateContent
-	resp, err := model.GenerateContent(ctx, genai.Text("Write a story about a magic backpack."))
-	if err != nil {
-		log.Fatal(err)
-	}
-	printResponse(resp)
+	r := gin.Default()
+	r.LoadHTMLFiles("index.html")
 
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("Start chatting with the model (type 'exit' to quit):")
+	r.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", nil)
+	})
 
-	for {
-		fmt.Print("You: ")
-		if !scanner.Scan() {
-			break
+	r.POST("/chat", func(c *gin.Context) {
+		var json struct {
+			Message string `json:"message"`
 		}
-		input := scanner.Text()
-		if input == "exit" {
-			break
+		if err := c.ShouldBindJSON(&json); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
 
-		resp, err := sendMessage(ctx, session, input)
+		resp, err := sendMessage(ctx, session, json.Message)
 		if err != nil {
-			log.Printf("Error sending message: %v", err)
-			continue
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 
-		fmt.Print("Model: ")
-		printResponse(resp)
-	}
+		responseText := printResponse(resp)
+		c.JSON(http.StatusOK, gin.H{"response": responseText})
+	})
+
+	r.Run(":8080")
 }
